@@ -5,32 +5,43 @@
 #include <DHT.h>
 #include <ESP8266WebServer.h>
 
-#define DHTPIN D4     // what pin we're connected to
-#define DHTTYPE DHT22   // DHT 22  (AM2302)
-#define Up D2
 #define Stop D1
+#define Up D2
 #define Down D3
+#define DHTPIN D4
+#define DHTTYPE DHT22   // DHT 22  (AM2302)
 
-float light = 0;
+float currentlightSensorValue  = 0;
+float currentTemperatureSensorValue = 0;
+float currentHumiditySensorValue = 0;
 long dht_lastInterval  = 0;
 long receiver_lastInterval  = 0;
 boolean duskMode = false;
 boolean receiver = false;
 boolean receivertemp = false;
 int counter = 0;
-float CurrentTemperature = 0;
-float CurrentHumidity = 0;
+String currentHostName = "ESP-Woonkamer-01";
+String currentMode = "";
+String currentVersion = "1.0.0";
+String lightsLivingRoom = "Uitgeschakelt";
+
 DHT dht(DHTPIN, DHTTYPE);
 ESP8266WebServer server(80);
-String CurrentHostName = "Woonkamer";
 IPAddress ip(192, 168, 1, 109);
 Adafruit_TSL2561_Unified tsl = Adafruit_TSL2561_Unified(TSL2561_ADDR_FLOAT, 12345);
-String currentMode = "";
 
 void setup(void) 
 {
   //Serial.begin(9600);
 
+  pinMode(Up, OUTPUT);
+  pinMode(Stop, OUTPUT);
+  pinMode(Down, OUTPUT);
+  
+  digitalWrite(Up, HIGH);
+  digitalWrite(Stop, HIGH);
+  digitalWrite(Down, HIGH);
+  
   ConnectToWifi();
 
   server.on("/", handlePage);
@@ -38,14 +49,6 @@ void setup(void)
   server.on("/stop", handle_stop);
   server.on("/up", handle_up);
 
-  pinMode(Up, OUTPUT); // Pin 5 an output
-  pinMode(Stop, OUTPUT); // Pin 5 an output
-  pinMode(Down, OUTPUT); // Pin 5 an output
-  
-  digitalWrite(Up, HIGH); // Pin 5 LOW
-  digitalWrite(Stop, HIGH); // Pin 5 LOW
-  digitalWrite(Down, HIGH); // Pin 5 LOW
-  
   /* Initialise the sensor */
   if(!tsl.begin())
   {
@@ -55,56 +58,50 @@ void setup(void)
   }
   
   /* Setup the sensor gain and integration time */
-  configureSensor();
+  configureLightSensor();
 
   dht.begin(); 
   
-  readLight();
+  readLightSensorValue();
   
-  readTemperatureAndHumidity();
+  readTemperatureAndHumiditySensorValue();
 
   receiver = ReceiverPoweredOn();
-
-  server.on("/", handlePage);
 
   server.begin();
 }
 
-/**************************************************************************/
-/*
-    Arduino loop function, called once 'setup' is complete (your own code
-    should go here)
-*/
-/**************************************************************************/
 void loop(void) 
 {  
   //elke 10 seconde
   if (millis() - dht_lastInterval > 10000)
   {
-    readLight();  
-    updatePilightLightGenericLabel(light,"black",125);
+    readLightSensorValue();  
+    updatePilightLightGenericLabel(currentlightSensorValue,"black",125);
     
-    readTemperatureAndHumidity();
-    UpdatePiligtTemperatureAndHumidity(CurrentTemperature, CurrentHumidity,127);
+    readTemperatureAndHumiditySensorValue();
+    UpdatePiligtTemperatureAndHumidity(currentTemperatureSensorValue, currentHumiditySensorValue,127);
     
-    if (light <=20 && !duskMode)
+    if (currentlightSensorValue <=20 && !duskMode)
     {
       counter = counter + 1;
-
+  
       if(counter > 2)
       {
         updatePilightGenericSwitch(true,130);
         duskMode = true;
+        lightsLivingRoom = "ingeschakelt";
         counter = 0;
       }
     }
-    else if (light >=25 && duskMode)
+    else if (currentlightSensorValue >=25 && duskMode)
     {
       counter = counter + 1;
       if(counter > 2)
       {
       updatePilightGenericSwitch(false,130);
       duskMode = false;
+      lightsLivingRoom = "uitgeschakelt";
       counter = 0;
       }
     }
@@ -134,7 +131,7 @@ void loop(void)
   
 }
 
-void readLight()
+void readLightSensorValue()
 {
   /* Get a new sensor event */ 
   sensors_event_t event;
@@ -143,25 +140,25 @@ void readLight()
    /* Display the results (light is measured in lux) */
   if (event.light)
   {
-    light = event.light;
+    currentlightSensorValue = event.light;
   }
   else
   {
     /* If event.light = 0 lux the sensor is probably saturated
     and no reliable data could be generated! */
     //Serial.println("Sensor overload");
-    light = 0;
+    currentlightSensorValue = 0;
   }
 }
 
-void readTemperatureAndHumidity()
+void readTemperatureAndHumiditySensorValue()
 {
   // Reading temperature for humidity takes about 250 milliseconds!
   // Sensor readings may also be up to 2 seconds 'old' (it's a very slow sensor)
-  CurrentHumidity = dht.readHumidity();          // Read humidity (percent)
-  CurrentTemperature = dht.readTemperature();     // Read temperature as Fahrenheit
+  currentHumiditySensorValue = dht.readHumidity();          // Read humidity (percent)
+  currentTemperatureSensorValue = dht.readTemperature();     // Read temperature as Fahrenheit
   // Check if any reads failed and exit early (to try again).
-  if (isnan(CurrentHumidity) || isnan(CurrentTemperature)) 
+  if (isnan(currentHumiditySensorValue) || isnan(currentTemperatureSensorValue)) 
   {
     return;
   }
@@ -179,7 +176,7 @@ void updateDomoticz()
     client.print("GET /json.htm?type=command&param=udevice&idx=");
     client.print(idx);
     client.print("&nvalue=0&svalue=");
-    client.print(light);
+    client.print(currentlightSensorValue);
     client.println(" HTTP/1.1");
     client.print("Host: ");
     client.print(host);
@@ -213,7 +210,7 @@ void updatePilightGenericSwitch(bool value, int id)
 void updatePilightLightGenericLabel(float value, String color,int id)
 {
   String url = "/send?protocol=generic_label&label=";
-  url += light;
+  url += value;
   url += "&color=";
   url += color;
   url += "&id=";
@@ -283,35 +280,112 @@ boolean ReceiverPoweredOn()
 void handlePage()
 {
   String versterker;
-
+  String versterkerPanelClass;
+  String verlichting;
+  String verlichtingPanelClass;
+  String webPage;
+  String currentIpAdres = String(ip[0]) + '.' + String(ip[1]) + '.' + String(ip[2]) + '.' + String(ip[3]);
+  
   if(receiver)
   {
     versterker = "Ingeschakelt";
+    versterkerPanelClass = "panel-success";
   }
   else
   {
     versterker = "uitgeschakelt";
+    versterkerPanelClass = "panel-default";
   }
-  
-  String webPage;
-  String CurrentIpAdres = String(ip[0]) + '.' + String(ip[1]) + '.' + String(ip[2]) + '.' + String(ip[3]);
-  String header = "<html lang='en'><head><title>Somfy control paneel</title><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><link rel='stylesheet' href='http://maxcdn.bootstrapcdn.com/bootstrap/3.3.4/css/bootstrap.min.css'><script src='https://ajax.googleapis.com/ajax/libs/jquery/1.11.1/jquery.min.js'></script><script src='http://maxcdn.bootstrapcdn.com/bootstrap/3.3.4/js/bootstrap.min.js'></script></head><body>";
-  String navbar = "<nav class='navbar navbar-default'><div class='container-fluid'><div class='navbar-header'><a class='navbar-brand' href='/'>Somfy control panel</a></div><div><ul class='nav navbar-nav'><li><a href='/'><span class='glyphicon glyphicon-question-sign'></span> Status</a></li><li class='dropdown'><a class='dropdown-toggle' data-toggle='dropdown' href='#'><span class='glyphicon glyphicon-cog'></span> Tools<span class='caret'></span></a><ul class='dropdown-menu'><li><a href='/updatefwm'>Firmware</a></li><li><a href='/api?action=reset&value=true'>Restart</a></ul></li><li><a href='https://github.com/incmve/Itho-WIFI-remote' target='_blank'><span class='glyphicon glyphicon-question-sign'></span> Help</a></li></ul></div></div></nav>  ";
-  String containerStart = "<div class='container'><div class='row'>";
-  String Title = "<div class='col-md-4'><div class='page-header'><h1>Woonkamer control paneel</h1></div>";
-  String Version = "<div class='panel panel-default'><div class='panel-body'><span class='glyphicon glyphicon-globeglobe'></span> Version:<span class='pull-right'>1.0</span></div></div>";
-  String IPAddClient = "<div class='panel panel-default'><div class='panel-body'><span class='glyphicon glyphicon-globeglobe'></span> IP-adres:<span class='pull-right'>" + CurrentIpAdres + "</span></div></div>";
-  String ClientName = "<div class='panel panel-default'><div class='panel-body'><span class='glyphicon glyphicon-globetag'></span> Hostnaam:<span class='pull-right'>" + CurrentHostName + "</span></div></div>";
-  String DHTTemp = "<div class='panel panel-default'><div class='panel-body'><span class='glyphicon glyphicon-globefire'></span> Temperatuur:<span class='pull-right'>" + (String)CurrentTemperature + " °C</span></div></div>";
-  String DHTHum =  "<div class='panel-body'><span class='glyphicon glyphicon-tint'></span> Luchtvogtigheid:<span class='pull-right'>" + (String)CurrentHumidity + " %</span></div></div>";
-  String MeasuredLight = "<div class='panel panel-default'><div class='panel-body'><span class='glyphicon glyphicon-certificate'></span> Gemeten hoeveelheid licht:<span class='pull-right'>" + String(light) + " Lux</span></div></div>";
-  String receiverMode = "<div class='panel panel-default'><div class='panel-body'><span class='glyphicon glyphicon-globeok'></span> Marantz versterker is:<span class='pull-right'>" + versterker + "</span></div></div>";
-  String somfyMode = "<div class='panel panel-default'><div class='panel-body'><span class='glyphicon glyphicon-globeok'></span> Modus:<span class='pull-right'>" + currentMode + "</span></div></div>";
-  String SomfyButtonCommands = "<div class='panel panel-default'><div class='panel-body'><span class='glyphicon glyphicon-globe'></span> <div class='row'><div class='span6' style='text-align:center'><a href=\"up\"><button type='button' class='btn btn-default'>Up</button></a><a href=\"stop\"><button type='button' class='btn btn-default'>Stop</button></a><a href=\"down\"><button type='button' class='btn btn-default'>Down</button><br></div></span></div></div></div>";
-  String containerEnd = "<div class='clearfix visible-lg'></div></div></div>";
-  String siteEnd = "</body></html>";
-  webPage = header + containerStart + Title + Version + IPAddClient + ClientName + MeasuredLight + DHTTemp + DHTHum + receiverMode + SomfyButtonCommands + somfyMode + containerEnd + siteEnd;
+
+  if(duskMode)
+  {
+    verlichting = "Ingeschakelt";
+    verlichtingPanelClass = "panel-success";
+  }
+  else
+  {
+    verlichting = "uitgeschakelt";
+    verlichtingPanelClass = "panel-default";
+  }
+
+  webPage += "<!DOCTYPE html>";
+  webPage += "<html lang=\"en\">";
+  webPage += "<head>";
+  webPage += "<title>Woonkamer</title>";
+  webPage += "<meta charset=\"utf-8\">";
+  webPage += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">";
+  webPage += "<link rel=\"stylesheet\" href=\"https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css\">";
+  webPage += "<script src=\"https://ajax.googleapis.com/ajax/libs/jquery/3.2.0/jquery.min.js\"></script>";
+  webPage += "<script src=\"https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/js/bootstrap.min.js\"></script>";
+  webPage += "</head>";
+  webPage += "<body>";
+  webPage += "<div class=\"container\">";
+  webPage += "<h2>Woonkamer</h2>";
+  webPage += "<div class=\"panel panel-default\">";
+  webPage += "<div class=\"panel-heading\">Zonnescherm</div>";
+  webPage += "<div class=\"panel-body\">";
+  webPage += "<span class='glyphicon glyphicon-menu-hamburger'></span>";
+  webPage += "Somfy bediening:<span class='pull-right'>";
+  webPage += "<a href=\"up\"><button type='button' class='btn btn-default'><span class=\"glyphicon glyphicon-menu-up\"></span></button></a>";
+  webPage += "<a href=\"stop\"><button type='button' class='btn btn-default'><span class=\"glyphicon glyphicon-stop\"></span></button></a>";
+  webPage += "<a href=\"down\"><button type='button' class='btn btn-default'><span class=\"glyphicon glyphicon-menu-down\"></span></button></a>";
+  webPage += "</span>";
+  webPage += "</div>";
+  webPage += "</div>";
+  webPage += "<div class=\"panel panel-default\">";
+  webPage += "<div class=\"panel-heading\">Klimaat</div>";
+  webPage += "<div class=\"panel-body\">";
+  webPage += "<span class='glyphicon glyphicon-fire'></span>";
+  webPage += "Temperatuur: <span class='pull-right'>" + String(currentTemperatureSensorValue) + "°C</span>";
+  webPage += "</div>";
+  webPage += "<div class=\"panel-body\">";
+  webPage += "<span class='glyphicon glyphicon-tint'></span>";
+  webPage += "Luchtvogtigheid: <span class='pull-right'>" + String(currentHumiditySensorValue) + "%</span>";
+  webPage += "</div>";
+  webPage += "</div>";
+  webPage += "<div class=\"panel " + verlichtingPanelClass + "\">";
+  webPage += "<div class=\"panel-heading\">Verlichting</div>";
+  webPage += "<div class=\"panel-body\">";
+  webPage += "<span class='glyphicon glyphicon-lamp'></span>";
+  webPage += "Woonkamer verlichting: <span class='pull-right'>" + lightsLivingRoom + "</span>";
+  webPage += "</div>";
+  webPage += "<div class=\"panel-body\">";
+  webPage += "<span class='glyphicon glyphicon-certificate'></span>";
+  webPage += "Gemeten lichtsterkte: <span class='pull-right'>" + String(currentlightSensorValue) + "Lux</span>";
+  webPage += "</div>";
+  webPage += "<div class=\"panel-body\">";
+  webPage += "<span class='glyphicon glyphicon-cloud'></span>";
+  webPage += "Schemersensor: <span class='pull-right'>" + verlichting + "</span>";
+  webPage += "</div>";
+  webPage += "</div>";
+  webPage += "<div class=\"panel " + versterkerPanelClass + "\">";
+  webPage += "<div class=\"panel-heading\">Aparaten</div>";
+  webPage += "<div class=\"panel-body\">";
+  webPage += "<span class='glyphicon glyphicon-off'></span>";
+  webPage += "Marantz versterker<span class='pull-right'>" + versterker + "</span>";
+  webPage += "</div>";
+  webPage += "</div>";
+  webPage += "<div class=\"panel panel-default\">";
+  webPage += "<div class=\"panel-heading\">Algemeen</div>";
+  webPage += "<div class=\"panel-body\">";
+  webPage += "<span class='glyphicon glyphicon-info-sign'></span>";
+  webPage += "Versie: <span class='pull-right'>"+ currentVersion +"</span>";
+  webPage += "</div>";
+  webPage += "<div class=\"panel-body\">";
+  webPage += "<span class='glyphicon glyphicon-info-sign'></span>";
+  webPage += "IP-adres: <span class='pull-right'>" + currentIpAdres + "</span>";
+  webPage += "</div>";
+  webPage += "<div class=\"panel-body\">";
+  webPage += "<span class='glyphicon glyphicon-info-sign'></span>";
+  webPage += "Host naam: <span class='pull-right'>" + currentHostName + "</span>";
+  webPage += "</div>";
+  webPage += "</div>";
+  webPage += "</div>";
+  webPage += "</body>";
+  webPage += "</html>";
+
   server.send ( 200, "text/html", webPage);
+ 
 }
 
 void handle_up()
@@ -320,7 +394,7 @@ void handle_up()
   digitalWrite(Up, LOW); // Pin 5 LOW
   delay(1000);
   digitalWrite(Up, HIGH); // Pin 5 LOW
-  Serial.println("Weg request UP");
+  //Serial.println("Weg request UP");
   handlePage();
 }
 
@@ -330,7 +404,7 @@ void handle_stop()
   digitalWrite(Stop, LOW); // Pin 5 LOW
   delay(1000);
   digitalWrite(Stop, HIGH); // Pin 5 LOW
-  Serial.println("Weg request Stop");
+  //Serial.println("Weg request Stop");
   handlePage();
 }
 
@@ -340,11 +414,11 @@ void handle_down()
   digitalWrite(Down, LOW); // Pin 5 LOW
   delay(1000);
   digitalWrite(Down, HIGH); // Pin 5 LOW
-  Serial.println("Weg request Down");
+  //Serial.println("Weg request Down");
   handlePage();
 }
 
-void configureSensor(void)
+void configureLightSensor(void)
 {
   /* You can also manually set the gain or enable auto-gain support */
   // tsl.setGain(TSL2561_GAIN_1X);      /* No gain ... use in bright light to avoid sensor saturation */
@@ -363,12 +437,6 @@ void configureSensor(void)
   //Serial.println("------------------------------------");
 }
 
-/**************************************************************************/
-/*
-    Arduino setup function (automatically called at startup)
-*/
-/**************************************************************************/
-
 void ConnectToWifi()
 {
   char ssid[] = "";
@@ -379,7 +447,7 @@ void ConnectToWifi()
   IPAddress subnet(255, 255, 255, 0);
   WiFi.config(ip, gateway, subnet);
 
-  WiFi.hostname(CurrentHostName);
+  WiFi.hostname(currentHostName);
   WiFi.begin(ssid, pass);
 
   if (WiFi.status() != WL_CONNECTED && i >= 30)
