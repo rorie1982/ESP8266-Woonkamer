@@ -5,9 +5,9 @@
 #include <DHT.h>
 #include <ESP8266WebServer.h>
 
-#define Stop D1
-#define Up D2
-#define Down D3
+#define Stop D5
+#define Up D6
+#define Down D7
 #define DHTPIN D4
 #define DHTTYPE DHT22   // DHT 22  (AM2302)
 
@@ -22,7 +22,7 @@ boolean receivertemp = false;
 int counter = 0;
 String currentHostName = "ESP-Woonkamer-01";
 String currentMode = "";
-String currentVersion = "1.0.0";
+String currentVersion = "1.0.2";
 String lightsLivingRoom = "Uitgeschakelt";
 
 DHT dht(DHTPIN, DHTTYPE);
@@ -48,6 +48,8 @@ void setup(void)
   server.on("/down", handle_down);
   server.on("/stop", handle_stop);
   server.on("/up", handle_up);
+  server.on("/xml",handle_xml);
+  server.on("/action",handle_buttonPressed);
 
   /* Initialise the sensor */
   if(!tsl.begin())
@@ -67,6 +69,8 @@ void setup(void)
   readTemperatureAndHumiditySensorValue();
 
   receiver = ReceiverPoweredOn();
+  updatePilightGenericSwitch(false,130);
+  updatePilightGenericSwitch(receiver, 1009);
 
   server.begin();
 }
@@ -114,7 +118,7 @@ void loop(void)
   }
 
   //elke 10 minuten
-  if (millis() - receiver_lastInterval > 600000)
+  if (millis() - receiver_lastInterval > 60000)
   {                                      
     receivertemp = ReceiverPoweredOn();
     
@@ -189,7 +193,7 @@ void updateDomoticz()
    }
 }
 
-void updatePilightGenericSwitch(bool value, int id)
+void updatePilightGenericSwitch(boolean value, int id)
 {
   String url = "";
 
@@ -279,44 +283,22 @@ boolean ReceiverPoweredOn()
 
 void handlePage()
 {
-  String versterker;
-  String versterkerPanelClass;
-  String verlichting;
-  String verlichtingPanelClass;
+  
   String webPage;
   String currentIpAdres = String(ip[0]) + '.' + String(ip[1]) + '.' + String(ip[2]) + '.' + String(ip[3]);
-  
-  if(receiver)
-  {
-    versterker = "Ingeschakelt";
-    versterkerPanelClass = "panel-success";
-  }
-  else
-  {
-    versterker = "uitgeschakelt";
-    versterkerPanelClass = "panel-default";
-  }
-
-  if(duskMode)
-  {
-    verlichting = "Ingeschakelt";
-    verlichtingPanelClass = "panel-success";
-  }
-  else
-  {
-    verlichting = "uitgeschakelt";
-    verlichtingPanelClass = "panel-default";
-  }
 
   webPage += "<!DOCTYPE html>";
   webPage += "<html lang=\"en\">";
   webPage += "<head>";
   webPage += "<title>Woonkamer</title>";
   webPage += "<meta charset=\"utf-8\">";
+  webPage += "<meta name=\"apple-mobile-web-app-capable\" content=\"yes\">";
   webPage += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">";
   webPage += "<link rel=\"stylesheet\" href=\"https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css\">";
+  webPage += GenerateFavIcon();
   webPage += "<script src=\"https://ajax.googleapis.com/ajax/libs/jquery/3.2.0/jquery.min.js\"></script>";
   webPage += "<script src=\"https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/js/bootstrap.min.js\"></script>";
+  webPage += GenerateJavaScript();
   webPage += "</head>";
   webPage += "<body>";
   webPage += "<div class=\"container\">";
@@ -324,59 +306,59 @@ void handlePage()
   webPage += "<div class=\"panel panel-default\">";
   webPage += "<div class=\"panel-heading\">Zonnescherm</div>";
   webPage += "<div class=\"panel-body\">";
-  webPage += "<span class='glyphicon glyphicon-menu-hamburger'></span>";
+  webPage += "<span class='glyphicon glyphicon-menu-hamburger'></span>&nbsp;";
   webPage += "Somfy bediening:<span class='pull-right'>";
-  webPage += "<a href=\"up\"><button type='button' class='btn btn-default'><span class=\"glyphicon glyphicon-menu-up\"></span></button></a>";
-  webPage += "<a href=\"stop\"><button type='button' class='btn btn-default'><span class=\"glyphicon glyphicon-stop\"></span></button></a>";
-  webPage += "<a href=\"down\"><button type='button' class='btn btn-default'><span class=\"glyphicon glyphicon-menu-down\"></span></button></a>";
+  webPage += "<a href=\"up\"><button type='button' class='btn btn-default'><span class=\"glyphicon glyphicon-menu-up\"></span></button></a>&nbsp;";
+  webPage += "<a href=\"stop\"><button type='button' class='btn btn-default'><span class=\"glyphicon glyphicon-stop\"></span></button></a>&nbsp;";
+  webPage += "<a href=\"down\"><button type='button' class='btn btn-default'><span class=\"glyphicon glyphicon-menu-down\"></span></button></a>&nbsp;";
   webPage += "</span>";
   webPage += "</div>";
   webPage += "</div>";
   webPage += "<div class=\"panel panel-default\">";
   webPage += "<div class=\"panel-heading\">Klimaat</div>";
   webPage += "<div class=\"panel-body\">";
-  webPage += "<span class='glyphicon glyphicon-fire'></span>";
-  webPage += "Temperatuur: <span class='pull-right'>" + String(currentTemperatureSensorValue) + "°C</span>";
+  webPage += "<span class='glyphicon glyphicon-fire'></span>&nbsp;";
+  webPage += "Temperatuur: <span class='pull-right' id='WTemp01'></span>";
   webPage += "</div>";
   webPage += "<div class=\"panel-body\">";
-  webPage += "<span class='glyphicon glyphicon-tint'></span>";
-  webPage += "Luchtvogtigheid: <span class='pull-right'>" + String(currentHumiditySensorValue) + "%</span>";
+  webPage += "<span class='glyphicon glyphicon-tint'></span>&nbsp;";
+  webPage += "Luchtvogtigheid: <span class='pull-right' id='WHum01'></span>";
   webPage += "</div>";
   webPage += "</div>";
-  webPage += "<div class=\"panel " + verlichtingPanelClass + "\">";
+  webPage += "<div id=\"WPanelLights\" class=\"panel panel-default\">";
   webPage += "<div class=\"panel-heading\">Verlichting</div>";
   webPage += "<div class=\"panel-body\">";
-  webPage += "<span class='glyphicon glyphicon-lamp'></span>";
-  webPage += "Woonkamer verlichting: <span class='pull-right'>" + lightsLivingRoom + "</span>";
+  webPage += "<span class='glyphicon glyphicon-lamp'></span>&nbsp;";
+  webPage += "Woonkamer verlichting: <span class='pull-right' id='WLight01'></span>";
   webPage += "</div>";
   webPage += "<div class=\"panel-body\">";
-  webPage += "<span class='glyphicon glyphicon-certificate'></span>";
-  webPage += "Gemeten lichtsterkte: <span class='pull-right'>" + String(currentlightSensorValue) + "Lux</span>";
+  webPage += "<span class='glyphicon glyphicon-certificate'></span>&nbsp;";
+  webPage += "Gemeten lichtsterkte: <span class='pull-right' id='WLux01'></span>";
   webPage += "</div>";
   webPage += "<div class=\"panel-body\">";
-  webPage += "<span class='glyphicon glyphicon-cloud'></span>";
-  webPage += "Schemersensor: <span class='pull-right'>" + verlichting + "</span>";
+  webPage += "<span class='glyphicon glyphicon-cloud'></span>&nbsp;";
+  webPage += "Schemersensor: <span class='pull-right' id='WDuskDawn01'></span>";
   webPage += "</div>";
   webPage += "</div>";
-  webPage += "<div class=\"panel " + versterkerPanelClass + "\">";
+  webPage += "<div id=\"WPanelReceiver\" class=\"panel panel-default\">";
   webPage += "<div class=\"panel-heading\">Aparaten</div>";
   webPage += "<div class=\"panel-body\">";
-  webPage += "<span class='glyphicon glyphicon-off'></span>";
-  webPage += "Marantz versterker<span class='pull-right'>" + versterker + "</span>";
+  webPage += "<span class='glyphicon glyphicon-off'></span>&nbsp;";
+  webPage += "Marantz versterker:<span class='pull-right' id ='WReceiver01'></span>";
   webPage += "</div>";
   webPage += "</div>";
   webPage += "<div class=\"panel panel-default\">";
   webPage += "<div class=\"panel-heading\">Algemeen</div>";
   webPage += "<div class=\"panel-body\">";
-  webPage += "<span class='glyphicon glyphicon-info-sign'></span>";
-  webPage += "Versie: <span class='pull-right'>"+ currentVersion +"</span>";
+  webPage += "<span class='glyphicon glyphicon-info-sign'></span>&nbsp;";
+  webPage += "Firmware: <span class='pull-right'>"+ currentVersion +"</span>";
   webPage += "</div>";
   webPage += "<div class=\"panel-body\">";
-  webPage += "<span class='glyphicon glyphicon-info-sign'></span>";
+  webPage += "<span class='glyphicon glyphicon-info-sign'></span>&nbsp;";
   webPage += "IP-adres: <span class='pull-right'>" + currentIpAdres + "</span>";
   webPage += "</div>";
   webPage += "<div class=\"panel-body\">";
-  webPage += "<span class='glyphicon glyphicon-info-sign'></span>";
+  webPage += "<span class='glyphicon glyphicon-info-sign'></span>&nbsp;";
   webPage += "Host naam: <span class='pull-right'>" + currentHostName + "</span>";
   webPage += "</div>";
   webPage += "</div>";
@@ -388,13 +370,178 @@ void handlePage()
  
 }
 
+String GenerateFavIcon()
+{
+  String returnValue;
+  returnValue += "<link rel=\"stylesheet\" href=\"https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css\">";
+  returnValue += "<link rel=\"apple-touch-icon\" sizes=\"57x57\" href=\"http://192.168.1.108/apple-icon-57x57.png\">";
+  returnValue += "<link rel=\"apple-touch-icon\" sizes=\"60x60\" href=\"http://192.168.1.108/apple-icon-60x60.png\">";
+  returnValue += "<link rel=\"apple-touch-icon\" sizes=\"72x72\" href=\"http://192.168.1.108/apple-icon-72x72.png\">";
+  returnValue += "<link rel=\"apple-touch-icon\" sizes=\"76x76\" href=\"http://192.168.1.108/apple-icon-76x76.png\">";
+  returnValue += "<link rel=\"apple-touch-icon\" sizes=\"114x114\" href=\"http://192.168.1.108/apple-icon-114x114.png\">";
+  returnValue += "<link rel=\"apple-touch-icon\" sizes=\"120x120\" href=\"http://192.168.1.108/apple-icon-120x120.png\">";
+  returnValue += "<link rel=\"apple-touch-icon\" sizes=\"144x144\" href=\"http://192.168.1.108/apple-icon-144x144.png\">";
+  returnValue += "<link rel=\"apple-touch-icon\" sizes=\"152x152\" href=\"http://192.168.1.108/apple-icon-152x152.png\">";
+  returnValue += "<link rel=\"apple-touch-icon\" sizes=\"180x180\" href=\"http://192.168.1.108/apple-icon-180x180.png\">";
+  returnValue += "<link rel=\"icon\" type=\"image/png\" sizes=\"192x192\"  href=\"http://192.168.1.108/android-icon-192x192.png\">";
+  returnValue += "<link rel=\"icon\" type=\"image/png\" sizes=\"32x32\" href=\"http://192.168.1.108/favicon-32x32.png\">";
+  returnValue += "<link rel=\"icon\" type=\"image/png\" sizes=\"96x96\" href=\"http://192.168.1.108/favicon-96x96.png\">";
+  returnValue += "<link rel=\"icon\" type=\"image/png\" sizes=\"16x16\" href=\"http://192.168.1.108/favicon-16x16.png\">";
+  returnValue += "<link rel=\"manifest\" href=\"http://192.168.1.108/manifest.json\">";
+  returnValue += "<meta name=\"msapplication-TileColor\" content=\"#ffffff\">";
+  returnValue += "<meta name=\"msapplication-TileImage\" content=\"http://192.168.1.108/ms-icon-144x144.png\">";
+  returnValue += "<meta name=\"theme-color\" content=\"#ffffff\">";
+  return returnValue;
+}
+
+void handle_xml()
+{
+  String returnValue;
+  String versterker;
+  String verlichting;
+
+   if(receiver)
+  {
+    versterker = "Ingeschakelt";
+  }
+  else
+  {
+    versterker = "Uitgeschakelt";
+  }
+
+  if(duskMode)
+  {
+    verlichting = "Ingeschakelt";
+  }
+  else
+  {
+    verlichting = "Uitgeschakelt";
+  }
+  
+  returnValue += "<?xml version=\"1.0\" encoding=\"utf-8\"?>";
+  returnValue += "<woonkamer>";
+  returnValue += "<sensors>";
+  returnValue += "<sensor>";
+  returnValue += "<id>WTemp01</id>";
+  returnValue += "<value>" + String(currentTemperatureSensorValue) + " °C</value>";
+  returnValue += "</sensor>";
+  returnValue += "<sensor>";
+  returnValue += "<id>WHum01</id>";
+  returnValue += "<value>" + String(currentHumiditySensorValue) + " %</value>";
+  returnValue += "</sensor>";
+  returnValue += "<sensor>";
+  returnValue += "<id>WLux01</id>";
+  returnValue += "<value>" + String(currentlightSensorValue) + " Lux</value>";
+  returnValue += "</sensor>";
+  returnValue += "<sensor>";
+  returnValue += "<id>WDuskDawn01</id>";
+  returnValue += "<value>" + verlichting + "</value>";
+  returnValue += "</sensor>";
+  returnValue += "</sensors>";
+  returnValue += "<devices>";
+  returnValue += "<device>";
+  returnValue += "<id>WReceiver01</id>";
+  returnValue += "<value>" + versterker + "</value>";
+  returnValue += "</device>";
+  returnValue += "</devices>";
+  returnValue += "<lights>";
+  returnValue += "<light>";
+  returnValue += "<id>WLight01</id>";
+  returnValue += "<value>" + verlichting + "</value>";
+  returnValue += "</light>";
+  returnValue += "</lights>";
+  returnValue += "</woonkamer>";
+  server.send ( 200, "text/html", returnValue);
+}
+
+void handle_buttonPressed()
+{
+  if (server.args() > 0)
+  {
+    Serial.println(server.argName(0));
+    Serial.println(server.arg(0));
+  }
+}
+
+String GenerateJavaScript()
+{
+  String returnValue;
+  returnValue += "<script type=\"text/javascript\">";
+  returnValue += "function LoadData(){";
+  returnValue += "$.ajax({";
+  returnValue += "type: \"GET\",";
+  returnValue += "url: \"http://192.168.1.109/xml\",";
+  returnValue += "cache: false,";
+  returnValue += "dataType: \"xml\",";
+  returnValue += "success: DisplayData";
+  returnValue += "});";
+  returnValue += "}";
+  
+  returnValue += "function ButtonPressed(id){";
+  returnValue += "$.ajax({";
+  returnValue += "type: \"GET\",";
+  returnValue += "url: \"http://192.168.1.109/action?id=\" + id,";
+  returnValue += "cache: false,";
+  returnValue += "dataType: \"xml\",";
+  returnValue += "success: DisplayData";
+  returnValue += "});";
+  returnValue += "}";
+  
+  returnValue += "function DisplayData(result){";
+  returnValue += "$(result).find('sensor').each(function(){";
+  returnValue += "var id = $(this).find(\"id\").text();";
+  returnValue += "var value = $(this).find(\"value\").text();";
+  returnValue += "$('#' + id).text(value);";
+  returnValue += "});";
+  returnValue += "$(result).find('device').each(function(){";
+  returnValue += "var id = $(this).find(\"id\").text();";
+  returnValue += "var value = $(this).find(\"value\").text();";
+  returnValue += "$('#' + id).text(value);";
+  returnValue += "});";
+  returnValue += "$(result).find('light').each(function(){";
+  returnValue += "var id = $(this).find(\"id\").text();";
+  returnValue += "var value = $(this).find(\"value\").text();";
+  returnValue += "$('#' + id).text(value);";
+  returnValue += "}); ";
+  returnValue += "UpdatePanels();";
+  returnValue += "}";
+
+  returnValue += "function UpdatePanels(){";
+  returnValue += "var statusDuskDawn = $('#WDuskDawn01').html();";
+  returnValue += "var statusReceiver = $('#WReceiver01').html();";
+  returnValue += "if (statusDuskDawn == \"Ingeschakelt\")";
+  returnValue += "{";
+  returnValue += "$('#WPanelLights').removeClass('panel panel-default').addClass('panel panel-success');";
+  returnValue += "}";
+  returnValue += "else";
+  returnValue += "{";
+  returnValue += "$('#WPanelLights').removeClass('panel panel-success').addClass('panel panel-default');";
+  returnValue += "}";
+  returnValue += "if (statusReceiver == \"Ingeschakelt\")";
+  returnValue += "{";
+  returnValue += "$('#WPanelReceiver').removeClass('panel panel-default').addClass('panel panel-success');";
+  returnValue += "}";
+  returnValue += "else";
+  returnValue += "{";
+  returnValue += "$('#WPanelReceiver').removeClass('panel panel-success').addClass('panel panel-default');";
+  returnValue += "}";
+  returnValue += "}";
+  
+  returnValue += "$(document).ready(function (){";
+  returnValue += "LoadData();";
+  returnValue += "setInterval(LoadData,3000);";
+  returnValue += "})";
+  returnValue += "</script>";
+  
+  return returnValue;
+}
+
 void handle_up()
 {
   currentMode = "Up";
   digitalWrite(Up, LOW); // Pin 5 LOW
   delay(1000);
   digitalWrite(Up, HIGH); // Pin 5 LOW
-  //Serial.println("Weg request UP");
   handlePage();
 }
 
@@ -404,7 +551,6 @@ void handle_stop()
   digitalWrite(Stop, LOW); // Pin 5 LOW
   delay(1000);
   digitalWrite(Stop, HIGH); // Pin 5 LOW
-  //Serial.println("Weg request Stop");
   handlePage();
 }
 
@@ -414,7 +560,6 @@ void handle_down()
   digitalWrite(Down, LOW); // Pin 5 LOW
   delay(1000);
   digitalWrite(Down, HIGH); // Pin 5 LOW
-  //Serial.println("Weg request Down");
   handlePage();
 }
 
