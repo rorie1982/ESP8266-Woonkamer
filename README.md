@@ -1,2 +1,3 @@
 # ESP8266-Woonkamer
-Livingroom controlpanel ESP8266
+A webinterface containing my Livingroom controlpanel running on a ESP8266.
+
