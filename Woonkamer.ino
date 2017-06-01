@@ -22,7 +22,7 @@ boolean receivertemp = false;
 int counter = 0;
 String currentHostName = "ESP-Woonkamer-01";
 String currentMode = "";
-String currentVersion = "1.0.2";
+String currentVersion = "1.0.4";
 String lightsLivingRoom = "Uitgeschakelt";
 
 DHT dht(DHTPIN, DHTTYPE);
@@ -45,9 +45,6 @@ void setup(void)
   ConnectToWifi();
 
   server.on("/", handlePage);
-  server.on("/down", handle_down);
-  server.on("/stop", handle_stop);
-  server.on("/up", handle_up);
   server.on("/xml",handle_xml);
   server.on("/action",handle_buttonPressed);
 
@@ -69,6 +66,7 @@ void setup(void)
   readTemperatureAndHumiditySensorValue();
 
   receiver = ReceiverPoweredOn();
+  //Sync at start up with pilight
   updatePilightGenericSwitch(false,130);
   updatePilightGenericSwitch(receiver, 1009);
 
@@ -94,7 +92,6 @@ void loop(void)
       {
         updatePilightGenericSwitch(true,130);
         duskMode = true;
-        lightsLivingRoom = "ingeschakelt";
         counter = 0;
       }
     }
@@ -105,7 +102,6 @@ void loop(void)
       {
       updatePilightGenericSwitch(false,130);
       duskMode = false;
-      lightsLivingRoom = "uitgeschakelt";
       counter = 0;
       }
     }
@@ -308,9 +304,9 @@ void handlePage()
   webPage += "<div class=\"panel-body\">";
   webPage += "<span class='glyphicon glyphicon-menu-hamburger'></span>&nbsp;";
   webPage += "Somfy bediening:<span class='pull-right'>";
-  webPage += "<a href=\"up\"><button type='button' class='btn btn-default'><span class=\"glyphicon glyphicon-menu-up\"></span></button></a>&nbsp;";
-  webPage += "<a href=\"stop\"><button type='button' class='btn btn-default'><span class=\"glyphicon glyphicon-stop\"></span></button></a>&nbsp;";
-  webPage += "<a href=\"down\"><button type='button' class='btn btn-default'><span class=\"glyphicon glyphicon-menu-down\"></span></button></a>&nbsp;";
+  webPage += "<button type='button' class='btn btn-default' id='btnUp' onclick='ButtonPressed(this.id)'><span class=\"glyphicon glyphicon-menu-up\"></span></button>&nbsp;";
+  webPage += "<button type='button' class='btn btn-default' id='btnStop' onclick='ButtonPressed(this.id)'><span class=\"glyphicon glyphicon-stop\"></span></button>&nbsp;";
+  webPage += "<button type='button' class='btn btn-default' id='btnDown'onclick='ButtonPressed(this.id)'><span class=\"glyphicon glyphicon-menu-down\"></span></button>&nbsp;";
   webPage += "</span>";
   webPage += "</div>";
   webPage += "</div>";
@@ -399,6 +395,7 @@ void handle_xml()
   String returnValue;
   String versterker;
   String verlichting;
+  String schemerSensor;
 
    if(receiver)
   {
@@ -411,11 +408,11 @@ void handle_xml()
 
   if(duskMode)
   {
-    verlichting = "Ingeschakelt";
+    schemerSensor = "Ingeschakelt";
   }
   else
   {
-    verlichting = "Uitgeschakelt";
+    schemerSensor = "Uitgeschakelt";
   }
   
   returnValue += "<?xml version=\"1.0\" encoding=\"utf-8\"?>";
@@ -435,7 +432,7 @@ void handle_xml()
   returnValue += "</sensor>";
   returnValue += "<sensor>";
   returnValue += "<id>WDuskDawn01</id>";
-  returnValue += "<value>" + verlichting + "</value>";
+  returnValue += "<value>" + schemerSensor + "</value>";
   returnValue += "</sensor>";
   returnValue += "</sensors>";
   returnValue += "<devices>";
@@ -447,7 +444,7 @@ void handle_xml()
   returnValue += "<lights>";
   returnValue += "<light>";
   returnValue += "<id>WLight01</id>";
-  returnValue += "<value>" + verlichting + "</value>";
+  returnValue += "<value>" + lightsLivingRoom + "</value>";
   returnValue += "</light>";
   returnValue += "</lights>";
   returnValue += "</woonkamer>";
@@ -458,8 +455,26 @@ void handle_buttonPressed()
 {
   if (server.args() > 0)
   {
-    Serial.println(server.argName(0));
-    Serial.println(server.arg(0));
+    if (server.arg(0) == "btnUp")
+    {
+      //Serial.println("button up pressed");
+      handle_up();
+    }
+    else if (server.arg(0) == "btnStop")
+    {
+      //Serial.println("button stop pressed");
+      handle_stop();
+    }
+    else if (server.arg(0) == "btnDown")
+    {
+      //Serial.println("button down pressed");
+      handle_down();
+    }
+    else if (server.arg(0) == "pilightWLights")
+    {
+      lightsLivingRoom = server.arg(1);
+      //Serial.println(server.arg(1));
+    }
   }
 }
 
@@ -478,13 +493,7 @@ String GenerateJavaScript()
   returnValue += "}";
   
   returnValue += "function ButtonPressed(id){";
-  returnValue += "$.ajax({";
-  returnValue += "type: \"GET\",";
-  returnValue += "url: \"http://192.168.1.109/action?id=\" + id,";
-  returnValue += "cache: false,";
-  returnValue += "dataType: \"xml\",";
-  returnValue += "success: DisplayData";
-  returnValue += "});";
+  returnValue += "$.post('http://192.168.1.109/action?id=' + id);";
   returnValue += "}";
   
   returnValue += "function DisplayData(result){";
@@ -507,7 +516,7 @@ String GenerateJavaScript()
   returnValue += "}";
 
   returnValue += "function UpdatePanels(){";
-  returnValue += "var statusDuskDawn = $('#WDuskDawn01').html();";
+  returnValue += "var statusDuskDawn = $('#WLight01').html();";
   returnValue += "var statusReceiver = $('#WReceiver01').html();";
   returnValue += "if (statusDuskDawn == \"Ingeschakelt\")";
   returnValue += "{";
