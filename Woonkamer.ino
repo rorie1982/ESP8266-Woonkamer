@@ -4,6 +4,7 @@
 #include <ESP8266WiFi.h>
 #include <DHT.h>
 #include <ESP8266WebServer.h>
+#include <ESP8266HTTPUpdateServer.h>
 
 #define Stop D5
 #define Up D6
@@ -12,8 +13,8 @@
 #define DHTTYPE DHT22   // DHT 22  (AM2302)
 
 float currentlightSensorValue  = 0;
-float currentTemperatureSensorValue = 0;
-float currentHumiditySensorValue = 0;
+float currentTemperature = 0;
+float currentHumidity = 0;
 long dht_lastInterval  = 0;
 long receiver_lastInterval  = 0;
 boolean duskMode = false;
@@ -22,18 +23,21 @@ boolean receivertemp = false;
 int counter = 0;
 String currentHostName = "ESP-Woonkamer-01";
 String currentMode = "";
-String currentVersion = "1.0.4";
+String currentVersion = "1.0.8";
 String lightsLivingRoom = "Uitgeschakelt";
+String standZonnescherm = "Omhoog";
+const char* username = "Rorie";
+const char* password = "j10HIaueQWKM";
 
 DHT dht(DHTPIN, DHTTYPE);
-ESP8266WebServer server(80);
+ESP8266WebServer httpServer(80);
 IPAddress ip(192, 168, 1, 109);
 Adafruit_TSL2561_Unified tsl = Adafruit_TSL2561_Unified(TSL2561_ADDR_FLOAT, 12345);
+ESP8266HTTPUpdateServer httpUpdater;
 
 void setup(void) 
 {
   //Serial.begin(9600);
-
   pinMode(Up, OUTPUT);
   pinMode(Stop, OUTPUT);
   pinMode(Down, OUTPUT);
@@ -44,33 +48,27 @@ void setup(void)
   
   ConnectToWifi();
 
-  server.on("/", handlePage);
-  server.on("/xml",handle_xml);
-  server.on("/action",handle_buttonPressed);
+  httpServer.on("/", handlePage);
+  httpServer.on("/xml",handle_xml);
+  httpServer.on("/action",handle_buttonPressed);
 
-  /* Initialise the sensor */
-  if(!tsl.begin())
-  {
-    /* There was a problem detecting the ADXL345 ... check your connections */
-    //Serial.print("Ooops, no TSL2561 detected ... Check your wiring or I2C ADDR!");
-    while(1);
-  }
-  
-  /* Setup the sensor gain and integration time */
-  configureLightSensor();
+  IntializeAndConfigureTSL2561();
 
-  dht.begin(); 
+  IntializeAM2315();
   
   readLightSensorValue();
   
-  readTemperatureAndHumiditySensorValue();
+  readTemperatureAndHumidity();
 
   receiver = ReceiverPoweredOn();
-  //Sync at start up with pilight
-  updatePilightGenericSwitch(false,130);
-  updatePilightGenericSwitch(receiver, 1009);
 
-  server.begin();
+  //set dusw dawn switch pilight to off at startup ESP8266
+  updatePilightGenericSwitch(false,130);
+  //set receiver switch pilight to current power status of receiver
+  updatePilightGenericSwitch(false, 1009);
+
+  httpUpdater.setup(&httpServer, username, password);
+  httpServer.begin();
 }
 
 void loop(void) 
@@ -81,8 +79,8 @@ void loop(void)
     readLightSensorValue();  
     updatePilightLightGenericLabel(currentlightSensorValue,"black",125);
     
-    readTemperatureAndHumiditySensorValue();
-    UpdatePiligtTemperatureAndHumidity(currentTemperatureSensorValue, currentHumiditySensorValue,127);
+    readTemperatureAndHumidity();
+    UpdatePiligtTemperatureAndHumidity(currentTemperature, currentHumidity,127);
     
     if (currentlightSensorValue <=20 && !duskMode)
     {
@@ -113,8 +111,8 @@ void loop(void)
     dht_lastInterval = millis();
   }
 
-  //elke 10 minuten
-  if (millis() - receiver_lastInterval > 60000)
+  //elke 5 minuten
+  if (millis() - receiver_lastInterval > 300000)
   {                                      
     receivertemp = ReceiverPoweredOn();
     
@@ -127,9 +125,29 @@ void loop(void)
     receiver_lastInterval = millis();
   }
   
-  server.handleClient();
+  httpServer.handleClient();
   
 }
+
+void IntializeAndConfigureTSL2561()
+{
+   /* Initialise the sensor */
+  if(!tsl.begin())
+  {
+    /* There was a problem detecting the ADXL345 ... check your connections */
+    //Serial.print("Ooops, no TSL2561 detected ... Check your wiring or I2C ADDR!");
+    while(1);
+  }
+  
+  /* Setup the sensor gain and integration time */
+  configureLightSensor();
+}
+
+void IntializeAM2315()
+{
+  dht.begin();
+}
+   
 
 void readLightSensorValue()
 {
@@ -151,42 +169,20 @@ void readLightSensorValue()
   }
 }
 
-void readTemperatureAndHumiditySensorValue()
+void readTemperatureAndHumidity()
 {
   // Reading temperature for humidity takes about 250 milliseconds!
   // Sensor readings may also be up to 2 seconds 'old' (it's a very slow sensor)
-  currentHumiditySensorValue = dht.readHumidity();          // Read humidity (percent)
-  currentTemperatureSensorValue = dht.readTemperature();     // Read temperature as Fahrenheit
+  float h = dht.readHumidity();          // Read humidity (percent)
+  float t = dht.readTemperature();     // Read temperature as Fahrenheit
   // Check if any reads failed and exit early (to try again).
-  if (isnan(currentHumiditySensorValue) || isnan(currentTemperatureSensorValue)) 
+  if (isnan(h) || isnan(t)) 
   {
     return;
   }
-}
 
-void updateDomoticz()
-{
-  int idx = 2;
-  const char* host = "192.168.1.108";
-  const int httpPort = 8080;
-  WiFiClient client;
-  
-  if (client.connect(host,httpPort))
-  {  
-    client.print("GET /json.htm?type=command&param=udevice&idx=");
-    client.print(idx);
-    client.print("&nvalue=0&svalue=");
-    client.print(currentlightSensorValue);
-    client.println(" HTTP/1.1");
-    client.print("Host: ");
-    client.print(host);
-    client.print(":");
-    client.println(httpPort);
-    client.println("User-Agent: Arduino-ethernet");
-    client.println("Connection: close");
-    client.println();
-    client.stop(); 
-   }
+  currentHumidity = h;          // Read humidity (percent)
+  currentTemperature = t;     // Read temperature as Fahrenheit
 }
 
 void updatePilightGenericSwitch(boolean value, int id)
@@ -249,7 +245,7 @@ void UpdatePilight(String url)
 
 boolean ReceiverPoweredOn()
 {
-  const char* host = "192.168.1.113";
+  const char* host = "192.168.1.185";
   WiFiClient client2;
   const int httpPort = 80;
   String url = "/goform/formMainZone_MainZoneXml.xml";
@@ -268,8 +264,8 @@ boolean ReceiverPoweredOn()
   while(client2.available()){
       xmlOutput += client2.readStringUntil('\r');    
   }
-  
-  if (xmlOutput.substring(235,237) == "ON")
+
+  if (xmlOutput.substring(237,239) == "ON")
   {
       returnValue = true;
   }
@@ -308,6 +304,10 @@ void handlePage()
   webPage += "<button type='button' class='btn btn-default' id='btnStop' onclick='ButtonPressed(this.id)'><span class=\"glyphicon glyphicon-stop\"></span></button>&nbsp;";
   webPage += "<button type='button' class='btn btn-default' id='btnDown'onclick='ButtonPressed(this.id)'><span class=\"glyphicon glyphicon-menu-down\"></span></button>&nbsp;";
   webPage += "</span>";
+  webPage += "</div>";
+  webPage += "<div class=\"panel-body\">";
+  webPage += "<span class='glyphicon glyphicon-info-sign'></span>&nbsp;";
+  webPage += "Stand: <span class='pull-right' id='WZonnescherm01'>"+ standZonnescherm +"</span>";
   webPage += "</div>";
   webPage += "</div>";
   webPage += "<div class=\"panel panel-default\">";
@@ -362,7 +362,7 @@ void handlePage()
   webPage += "</body>";
   webPage += "</html>";
 
-  server.send ( 200, "text/html", webPage);
+  httpServer.send ( 200, "text/html", webPage);
  
 }
 
@@ -420,11 +420,11 @@ void handle_xml()
   returnValue += "<sensors>";
   returnValue += "<sensor>";
   returnValue += "<id>WTemp01</id>";
-  returnValue += "<value>" + String(currentTemperatureSensorValue) + " °C</value>";
+  returnValue += "<value>" + String(currentTemperature) + " °C</value>";
   returnValue += "</sensor>";
   returnValue += "<sensor>";
   returnValue += "<id>WHum01</id>";
-  returnValue += "<value>" + String(currentHumiditySensorValue) + " %</value>";
+  returnValue += "<value>" + String(currentHumidity) + " %</value>";
   returnValue += "</sensor>";
   returnValue += "<sensor>";
   returnValue += "<id>WLux01</id>";
@@ -440,6 +440,12 @@ void handle_xml()
   returnValue += "<id>WReceiver01</id>";
   returnValue += "<value>" + versterker + "</value>";
   returnValue += "</device>";
+
+   returnValue += "<device>";
+  returnValue += "<id>WZonnescherm01</id>";
+  returnValue += "<value>" + standZonnescherm + "</value>";
+  returnValue += "</device>";
+  
   returnValue += "</devices>";
   returnValue += "<lights>";
   returnValue += "<light>";
@@ -448,32 +454,31 @@ void handle_xml()
   returnValue += "</light>";
   returnValue += "</lights>";
   returnValue += "</woonkamer>";
-  server.send ( 200, "text/html", returnValue);
+  httpServer.send ( 200, "text/html", returnValue);
 }
 
 void handle_buttonPressed()
 {
-  if (server.args() > 0)
+  if (httpServer.args() > 0)
   {
-    if (server.arg(0) == "btnUp")
+    if (httpServer.arg(0) == "btnUp")
     {
-      //Serial.println("button up pressed");
+      standZonnescherm = "Omhoog";
       handle_up();
     }
-    else if (server.arg(0) == "btnStop")
+    else if (httpServer.arg(0) == "btnStop")
     {
-      //Serial.println("button stop pressed");
+      standZonnescherm = "Stop";
       handle_stop();
     }
-    else if (server.arg(0) == "btnDown")
+    else if (httpServer.arg(0) == "btnDown")
     {
-      //Serial.println("button down pressed");
+      standZonnescherm = "Omlaag";
       handle_down();
     }
-    else if (server.arg(0) == "pilightWLights")
+    else if (httpServer.arg(0) == "pilightWLights")
     {
-      lightsLivingRoom = server.arg(1);
-      //Serial.println(server.arg(1));
+      lightsLivingRoom = httpServer.arg(1);
     }
   }
 }
@@ -593,8 +598,8 @@ void configureLightSensor(void)
 
 void ConnectToWifi()
 {
-  char ssid[] = "";
-  char pass[] = "";
+  char ssid[] = "Rorie";
+  char pass[] = "BIAW7W9H7Y8D";
   int i = 0;
 
   IPAddress gateway(192, 168, 1, 1);
@@ -603,16 +608,10 @@ void ConnectToWifi()
 
   WiFi.hostname(currentHostName);
   WiFi.begin(ssid, pass);
+  WiFi.mode(WIFI_STA);
 
-  if (WiFi.status() != WL_CONNECTED && i >= 30)
-  {
-    WiFi.disconnect();
-    delay(1000);
-  }
-  else
-  {
-    delay(5000);
-    ip = WiFi.localIP();
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
   }
 
 }
